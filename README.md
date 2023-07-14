@@ -42,4 +42,5 @@ After extracting the useful features, run `VesQuantification/FeatureQuantificati
 ## Sample Dataset
 
 The `SampleData` folder contains a small 3D blood vessel dataset. It represents a part of the entire mouse brain captured by a
-customized light-sheet microscopy developed in the Biophotonic Molecular Laboratory. Feel free to try the entire pipeline discussed previously on this dataset!
+customized light-sheet microscopy developed in the Biophotonic Molecular Laboratory at the University of Washington.
+Feel free to try the entire pipeline discussed previously on this dataset!
