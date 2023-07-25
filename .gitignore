@@ -1,2 +1,6 @@
 postprocessingtips.docx
 .DS_Store
+VesSegmentation/Testfiles
+VesSegmentation/.DS_Store
+VesSegmentation/StepByStep/.DS_Store
+VesSegmentation/StepByStep/MultiOtsu.py
