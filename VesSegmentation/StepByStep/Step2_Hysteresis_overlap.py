@@ -12,9 +12,10 @@ with h5.File(filedir, 'r') as f:
     d, h, w = image_3d.shape
 
 # Load the 'Multi_otsu.tif' file using memory-mapping
-images = tifffile.memmap(save_path + 'Multi_otsu.tif', dtype=np.uint8)
+images = tifffile.imread(save_path + 'divide.tif')
+print(images.shape)
 
-lowt = 1
+lowt = 2
 hight = 3
 
 # Process the data in chunks with overlapping regions
@@ -33,7 +34,7 @@ for i in range(num_chunks):
     end_idx_with_overlap = min(d, end_idx + overlap_size)
 
     # Load the chunk with overlapping region
-    chunk_with_overlap = images[start_idx_with_overlap:end_idx_with_overlap]
+    chunk_with_overlap = images[start_idx_with_overlap:end_idx_with_overlap, :, :]
 
     # Apply hysteresis thresholding on the chunk (including the overlapping region)
     hyst = filters.apply_hysteresis_threshold(chunk_with_overlap, lowt, hight).astype(np.uint8) * 255

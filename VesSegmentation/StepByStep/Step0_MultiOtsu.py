@@ -1,7 +1,6 @@
 """
-This module contains all the code needed for the vessel segmentation pipeline, including multi-otsu thresholding,
-hysteresis thresholding, hole filling, and smoothing (in sequential order). The user needs to define filepaths and
-parameters at the beginning of the main script.
+This module contains the code for "multi-otsu thresholding" step needed for a vessel segmentation pipeline.
+The user needs to define filepaths and parameters at the beginning of the main script.
 """
 
 
@@ -214,19 +213,19 @@ def intensity_normalization(struct_img: np.ndarray, scaling_param: list):
 
 if __name__ == '__main__':
     ##### ---------- Define Filepaths ---------- #####
-    DATADIR = '/Users/qinghuahan/Desktop/LiuLabProjects/3D_Vessel_Segmentation/Vessel-Analysis/SampleData/bloodvessel.h5'  # Filepath of the HDF5 dataset. It must be an HDF5 file with at least 2 levels of downsampling (levels: 0, 1, 2)
-    SAVEPATH = '/Users/qinghuahan/Desktop/LiuLabProjects/3D_Vessel_Segmentation/Vessel-Analysis/VesSegmentation/Testfiles/'  # Filepath where the segmented masks will be saved
+    DATADIR = ''  # Filepath of the HDF5 dataset. It must be an HDF5 file with at least 2 levels of downsampling (levels: 0, 1, 2)
+    SAVEPATH = ''  # Filepath where the segmented masks will be saved
     #################################################
 
 
     ##### ---------- Define Parameters ---------- #####
     # Region of interest
     D_START = 0  # Start depth (0 if processing the entire dataset)
-    D_END = 400 # End depth (use the maximum depth if processing the entire dataset)
+    D_END =  # End depth (use the maximum depth if processing the entire dataset)
     H_START = 0  # Start height (0 if processing the entire dataset)
-    H_END = 400 # End height (use the maximum height if processing the entire dataset)
+    H_END =  # End height (use the maximum height if processing the entire dataset)
     W_START = 0  # Start width (0 if processing the entire dataset)
-    W_END = 400 # End width (use the maximum width if processing the entire dataset)
+    W_END =  # End width (use the maximum width if processing the entire dataset)
 
     # Define chunks
     CHUNK_SIZE = 100  # Size of the convolving box. A small chunk size increases noise and computational time, while a large chunk size reduces the detection of microvessels.
@@ -243,12 +242,12 @@ if __name__ == '__main__':
     with h5.File(DATADIR, 'r') as f:
         d_raw,h_raw,w_raw = f[CH].shape
         print(f[CH].shape)
-        d = 400
-        h = 400
-        w = 400
-        # d = d_raw
-        # h = h_raw
-        # w = w_raw
+        # d = 
+        # h = 
+        # w = 
+        d = d_raw
+        h = h_raw
+        w = w_raw
 
         # chunk = f[CH][D_START:D_END, H_START:H_END, W_START:W_END]
         # chunk = intensity_normalization(chunk, [0.5,3])
@@ -309,40 +308,11 @@ if __name__ == '__main__':
     slide_end = time.time()
     duration = slide_end - slide_start
     print('Overall duration of sliding: ' + str(duration) + ' s')
-    # imsave(SAVEPATH + 'Multi_otsu.tif', otsu_3d)
+    imsave(SAVEPATH + 'otsu_3d.tif', otsu_3d)
+    imsave(SAVEPATH + 'count_3d.tif', count_3d)
     #########################################################
 
 
     memory_info = psutil.virtual_memory()
     total_ram_used = memory_info.used
     print(f"Total RAM used for Multi-otsu Thresholding: {total_ram_used / 1024 ** 3} GB")
-
-
-    ##### ---------- Edge Smoothing ---------- #####
-    otsu_3d = (np.divide(otsu_3d, count_3d)).astype(np.uint8)
-    imsave(SAVEPATH + 'otsu_3d.tif', otsu_3d)
-    imsave(SAVEPATH + 'count_3d.tif', count_3d)
-    ##############################################
-
-
-    ##### ---------- Hysteresis Thresholding ---------- #####
-    # For a large dataset, the computer may run out of memory up to this point. Do it in a separate python task!!!
-    hyst = filters.apply_hysteresis_threshold(otsu_3d, HYST_LOW, HYST_HIGH).astype(np.uint8)*255
-    # imsave(SAVEPATH + 'hyst.tif', hyst)
-    #########################################################
-
-
-    ##### ---------- Hole Filling ---------- #####
-    # For a large dataset, the computer may run out of memory up to this point. Do it in a separate python task!!!
-    hole_filling = ndi.binary_fill_holes(hyst).astype(np.uint8)
-    # fill_hole = (hole_filling*255).astype(np.uint8)
-    # imsave(SAVEPATH + 'hole_filling.tif', hole_filling)
-    ##############################################
-
-
-    ##### ---------- Smoothing ---------- #####
-    # For a large dataset, the computer may run out of memory up to this point. Do it in a separate python task!!!
-    size = 3
-    smoothing = median_filter(hole_filling, size=size)
-    imsave(SAVEPATH + 'smoothing.tif', smoothing)
-    ###########################################
