@@ -4,18 +4,18 @@ The user needs to define filepaths at the beginning of the main script.
 """
 
 
-from tifffile import imsave
+from tifffile import imsave, imread
 import time
-import tifffile
 from scipy.ndimage import median_filter
 
-save_path = '' # Filepath where the hole_filling.tif is saved and smoothing.tif will be saved
-fill_hole = tifffile.imread(save_path + 'hole_filling.tif')
+
+save_path = '' # Filepath where the remove_region.tif is saved and smoothing.tif will be saved
+remove_region = imread(save_path + 'remove_region.tif')
 
 smooth_start = time.time()
 
 size = 3
-smoothed = median_filter(fill_hole, size)
+smoothed = median_filter(remove_region, size)
 imsave(save_path + 'smoothing.tif', smoothed)
 
 smooth_end = time.time()

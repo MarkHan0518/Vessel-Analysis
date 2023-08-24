@@ -1,17 +1,22 @@
+"""
+This module contains the code for "hysteresis thresholding" step needed for a vessel segmentation pipeline.
+The user needs to define filepaths and parameters at the beginning of the main script.
+"""
+
+
+import tifffile
+import h5py as h5
 import numpy as np
 from skimage import filters
-import h5py as h5
-import tifffile
+
 
 filedir = '' # Filepath of the HDF5 dataset.
-save_path = '' # Filepath where the Multi_otsu.tif is saved and hyst.tif will be saved
+save_path = '' # Filepath where the divide.tif is saved and hyst.tif will be saved
 
 ch = 't00000/s00/0/cells' # use level 0 (original) dataset
 with h5.File(filedir, 'r') as f:
     image_3d = f[ch]
     d, h, w = image_3d.shape
-
-# Load the 'Multi_otsu.tif' file using memory-mapping
 images = tifffile.imread(save_path + 'divide.tif')
 print(images.shape)
 
@@ -19,7 +24,7 @@ lowt = 2
 hight = 3
 
 # Process the data in chunks with overlapping regions
-chunk_size = 100  # You can adjust this based on your memory capacity
+chunk_size = 1000  # You can adjust this based on your memory capacity
 num_chunks = (d + chunk_size - 1) // chunk_size
 
 # Define the size of the overlapping region between chunks
@@ -49,4 +54,3 @@ for i in range(num_chunks):
     tifffile.imsave(save_path + f'hyst_overlap_{i}.tif', hyst_result)
 
 print("Hysteresis thresholding with overlapping regions completed!")
-

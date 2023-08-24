@@ -4,7 +4,7 @@ The user needs to define filepaths and parameters at the beginning of the main s
 """
 
 
-# # Set up env
+# # All the packages needed to set up the environment, copy them into the terminal
 # conda create -y -n vessel_seg -c conda-forge python=3.9
 # conda activate vessel_seg
 # pip install tifffile
@@ -15,92 +15,55 @@ The user needs to define filepaths and parameters at the beginning of the main s
 # pip install psutil
 
 
-import psutil
-import numpy as np
-from tifffile import imsave
-from skimage import filters
-from math import ceil
 import os
-import h5py as h5
-import time
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
-import concurrent.futures
-from scipy.ndimage import median_filter
-from scipy import ndimage as ndi
 import itk
+import time
+import psutil
+import h5py as h5
+import numpy as np
+from math import ceil
+import concurrent.futures
+from tifffile import imsave
 from scipy.stats import norm
+import multiprocessing as mp
+from skimage import filters, measure
+from concurrent.futures import ProcessPoolExecutor
 
 
 ##### ---------- Functions ---------- #####
-def i16_2_u16(stack):
-    '''
+def uint16_converter(stack: np.ndarray) -> np.ndarray:
+    """Clip the intensity of an input 3D image to ensure values are in the range of 0 to 65535.
+
     Parameters:
-    - stack: a 3D numpy array of the data
+    ----------
+    stack: np.ndarray
+        The input 3D image as a NumPy array.
 
-    Function:
-    Discard the signal counts that is below 0
-
-    Return:
-    A 3D numpy array of the processed data
-    '''
-
+    Returns:
+    -------
+    np.ndarray
+        A new NumPy array with intensity values clipped to the range [0, 65535].
+    """
     return np.uint16(np.clip(stack, 0, 65535))
 
 
-def norm_uint8(stack, background_val, high_val):
-    '''
+def remove_noise(stack: np.ndarray, background_val: int) -> np.ndarray:
+    """Remove noise from a 3D image by setting values below a specified threshold to 0.
+
     Parameters:
-    - stack: a 3D numpy array of the data
+    ----------
+    stack : np.ndarray
+        The input 3D image as a NumPy array.
+    background_val : int
+        Intensity threshold below which noise values are set to 0.
 
-    Function:
-    Convert data from uint16 to uint8 with normalization
-
-    Return:
-    A 3D numpy array of the processed data
-    '''
-
-    stack_norm = np.clip(stack, background_val, high_val) - background_val
-    stack_norm = stack_norm.astype(float) / (high_val-background_val) * 255
-    stack_norm = stack_norm.astype(np.uint8)
-    return stack_norm
-
-
-def multi_otsu(data):
-    '''
-    Parameters:
-    - data: a tuple contains a 3D numpy array of the data, a 3D numpy array of the downsampled data,
-    and a tuple of x,y,z coordinates of the current region of interest
-
-    Function:
-    Preprocess the data by clipping with a high threshold (99.9% of the histogram of the downsampled dataset)
-    and a low threshold (150); perform Multi-Otsu thresholding of downsampled dataset and apply it to the
-    original dataset
-
-    Return:
-    A tuple contains a 3D numpy array of the Multi-Otsu processed data and a tuple of x,y,z coordinates of the
-    current region of interest
-    '''
-
-    chunk, position = data
-    c_d, c_h, c_w = chunk.shape
-    chunk_volume = c_d * c_h * c_w
-    chunk = intensity_normalization(chunk, [0.5,3])
-    chunk = edge_preserving_smoothing_3d(chunk)
-
-    try:
-        thresh = filters.threshold_multiotsu(chunk, classes=5)
-        otsu_3d = (np.digitize(chunk, thresh)).astype(np.uint8)
-
-        if (otsu_3d == 1).sum() >= chunk_volume*0.99:
-            result = np.zeros(chunk.shape, dtype = np.uint8)
-        else:
-            result = otsu_3d
-
-    except ValueError:
-        result = np.zeros(chunk.shape, dtype = np.uint8)
-
-    return (result, position)
+    Returns:
+    ----------
+    np.ndarray
+        The input NumPy array with noise values set to 0 below the specified threshold.
+    """
+    stack[stack <= background_val] = 0
+    return stack
 
 
 def edge_preserving_smoothing_3d(
@@ -109,75 +72,81 @@ def edge_preserving_smoothing_3d(
     conductance: float = 1.2,
     timeStep: float = 0.0625,
     spacing: list = [1, 1, 1],
-    ):
-    """perform edge preserving smoothing on a 3D image
+    ) -> np.ndarray:
+    """Perform edge-preserving smoothing on a 3D image using gradient anisotropic diffusion.
+
+    This function applies edge-preserving smoothing to a 3D image using gradient anisotropic diffusion.
+    The input image is smoothed while preserving sharp edges.
 
     Parameters:
-    -------------
-    struct_img: np.ndarray
-        the image to be smoothed
-    numberOfInterations: int
-        how many smoothing iterations to perform. More iterations give more
-        smoothing effect. Default is 10.
-    timeStep: float
-         the time step to be used for each iteration, important for numberical
-         stability. Default is 0.0625 for 3D images. Do not suggest to change.
-    spacing: List
-        the spacing of voxels in three dimensions. Default is [1, 1, 1]
+    ----------
+    struct_img : np.ndarray
+        The 3D image to be smoothed.
+    numberOfIterations : int, optional
+        Number of smoothing iterations to perform. More iterations result in a stronger smoothing effect.
+        Default is 10.
+    conductance : float, optional
+        Conductance parameter for diffusion. A higher value preserves edges more effectively.
+        Default is 1.2.
+    timeStep : float, optional
+        Time step used for each iteration. Important for numerical stability. Default is 0.0625 for 3D images.
+    spacing : list, optional
+        Spacing of voxels in three dimensions. Default is [1, 1, 1].
+        
+    Returns:
+    ----------
+    np.ndarray
+        A 3D numpy array representing the edge-preserving smoothed image.
 
-    Reference:
-    -------------
-    https://itk.org/Doxygen/html/classitk_1_1GradientAnisotropicDiffusionImageFilter.html
-    https://github.com/AllenCell/aics-segmentation/blob/main/aicssegmentation/core/pre_processing_utils.py
+    References:
+    ----------
+    - Gradient Anisotropic Diffusion Image Filter:
+      https://itk.org/Doxygen/html/classitk_1_1GradientAnisotropicDiffusionImageFilter.html
+    - AICS Segmentation Library (source of the code):
+      https://github.com/AllenCell/aics-segmentation/blob/main/aicssegmentation/core/pre_processing_utils.py
     """
-
     itk_img = itk.GetImageFromArray(struct_img.astype(np.float32))
-
     # set spacing
     itk_img.SetSpacing(spacing)
-
     gradientAnisotropicDiffusionFilter = itk.GradientAnisotropicDiffusionImageFilter.New(itk_img)
     gradientAnisotropicDiffusionFilter.SetNumberOfIterations(numberOfIterations)
     gradientAnisotropicDiffusionFilter.SetTimeStep(timeStep)
     gradientAnisotropicDiffusionFilter.SetConductanceParameter(conductance)
     gradientAnisotropicDiffusionFilter.Update()
-
     itk_img_smooth = gradientAnisotropicDiffusionFilter.GetOutput()
-
     img_smooth_ag = itk.GetArrayFromImage(itk_img_smooth)
-
     return img_smooth_ag
 
 
-def intensity_normalization(struct_img: np.ndarray, scaling_param: list):
-    """Normalize the intensity of input image so that the value range is from 0 to 1.
+def intensity_normalization(struct_img: np.ndarray, scaling_param: list) -> np.ndarray:
+    """Normalize the intensity of a 3D input image to the range [0, 1] using various methods.
+
+    This function performs intensity normalization on a 3D image. Different methods of normalization
+    are supported based on the given `scaling_param` list.
 
     Parameters:
-    ------------
-    img: np.ndarray
-        a 3d image
-    scaling_param: List
-        a list with only one value 0, i.e. [0]: Min-Max normlaizaiton,
-            the max intensity of img will be mapped to 1 and min will
-            be mapped to 0
-        a list with a single positive integer v, e.g. [5000]: Min-Max normalization,
-            but first any original intensity value > v will be considered as outlier
-            and reset of min intensity of img. After the max will be mapped to 1
-            and min will be mapped to 0
-        a list with two float values [a, b], e.g. [1.5, 10.5]: Auto-contrast
-            normalizaiton. First, mean and standard deviaion (std) of the original
-            intensity in img are calculated. Next, the intensity is truncated into
-            range [mean - a * std, mean + b * std], and then recaled to [0, 1]
-        a list with four float values [a, b, c, d], e.g. [0.5, 15.5, 200, 4000]:
-            Auto-contrast normalization. Similat to above case, but only intensity value
-            between c and d will be used to calculated mean and std.
-    
+    ----------
+    struct_img : np.ndarray
+        The 3D image to be intensity-normalized.
+    scaling_param : list
+        A list specifying the intensity normalization method:
+        - [0]: Min-Max normalization, mapping the max intensity to 1 and min to 0.
+        - [v]: Min-Max normalization, setting values above v to min before mapping.
+        - [a, b]: Auto-contrast normalization. Truncates intensity to [mean - a * std, mean + b * std]
+          and then scales to [0, 1].
+        - [a, b, c, d]: Auto-contrast normalization within range [c, d].
+
+    Returns:
+    -------
+    np.ndarray
+        A 3D numpy array representing the intensity-normalized image.
+
     Reference:
-    -------------
+    ----------
+    AICS Segmentation Library (source of the code):
     https://github.com/AllenCell/aics-segmentation/blob/main/aicssegmentation/core/pre_processing_utils.py
     """
     assert len(scaling_param) > 0
-
     if len(scaling_param) == 1:
         if scaling_param[0] < 1:
             print("intensity normalization: min-max normalization with NO absolute" + "intensity upper bound")
@@ -206,54 +175,148 @@ def intensity_normalization(struct_img: np.ndarray, scaling_param: list):
         strech_min <= strech_max
     ), f"Please adjust intensity normalization parameters so that {strech_min}<={strech_max}"
     struct_img = (struct_img - strech_min + 1e-8) / (strech_max - strech_min + 1e-8)
-
-    # print('intensity normalization completes')
     return struct_img
+
+
+def multi_otsu_processing(data: tuple) -> tuple:
+    """Apply Multi-Otsu thresholding to a 3D dataset after preprocessing and filtering.
+
+    This function takes a tuple containing a 3D numpy array of the data, a tuple of x, y, z coordinates of
+    the current region of interest, and an integer value specifying a predefined background noise threshold.
+    It preprocesses the data by performing the following steps:
+    1. Remove noise by setting values below the specified noise threshold to 0.
+    2. Apply intensity normalization to the chunk using a specific range.
+    3. Perform edge-preserving 3D smoothing on the chunk.
+
+    Multi-Otsu thresholding is then applied to the preprocessed chunk with a target of 5 classes. The resulting
+    thresholded data is returned as a 3D numpy array. If the thresholding result has a dominant class occupying
+    more than 99% of the chunk, the result is an array of zeros.
+
+    Parameters:
+    ----------
+    data : tuple
+        A tuple containing the following elements:
+        - A 3D numpy array of the data.
+        - A tuple of x, y, z coordinates of the current region of interest.
+        - An integer representing a predefined background noise threshold.
+
+    Returns:
+    ----------
+    tuple
+        A tuple containing the following elements:
+        - A 3D numpy array of the Multi-Otsu processed data.
+        - A tuple of x, y, z coordinates of the current region of interest.
+    """
+    chunk, position, noise_thrsh = data
+    c_d, c_h, c_w = chunk.shape
+    chunk_volume = c_d * c_h * c_w
+    chunk = intensity_normalization(remove_noise(uint16_converter(chunk), noise_thrsh), [0.5,3])
+    chunk = edge_preserving_smoothing_3d(chunk)
+
+    try:
+        thresh = filters.threshold_multiotsu(chunk, classes=5)
+        print("Thresholds of current chunk: " + str(thresh))
+        otsu_3d = (np.digitize(chunk, thresh)).astype(np.uint8)
+
+        if (otsu_3d == 1).sum() >= chunk_volume*0.99:
+            result = np.zeros(chunk.shape, dtype = np.uint8)
+        else:
+            result = otsu_3d
+
+    except ValueError:
+        result = np.zeros(chunk.shape, dtype = np.uint8)
+
+    return (result, position)
+
+
+def remove_small_region(image, area_size=100, extent=0.4, small_region_size=40) -> np.ndarray:
+    """Remove Small Regions and Non-Vascular Regions from a 3D Image
+
+    This function takes a 3D image containing segmented regions and removes small
+    and non-vascular regions based on their area and extent. The result is an image with the targeted regions removed.
+
+    Parameters:
+    ----------
+    image: ndarray
+        A 3D numpy array containing segmented regions.
+    area_size: int, optional
+        Threshold for small region size. Default is 100.
+    extent: float, optional
+        Threshold for region extent to determine non-vascular regions. Default is 0.4.
+    small_region_size: int, optional
+        Threshold for very small region size. Default is 40.
+
+    Returns:
+    ----------
+    ndarray
+        A 3D numpy array with small and non-vascular regions removed.
+
+    Notes:
+    ----------
+        - 'extent' here refers to the ratio of isolated region size to the external bounding box size.
+        - The function uses skimage's regionprops to analyze and filter regions.
+    
+    Reference:
+    ----------
+    - HP-VSP Library (source of the code):
+    https://github.com/visionlyx/HP-VSP/blob/main/vascular%20segmentation%20pipeline/mpi_block_fusion.py
+    """
+    labels = measure.label(image)
+    properties = measure.regionprops(labels)
+    
+    for props in properties:
+        print(f"Label: {props.label}, Area: {props.area}, Centroid: {props.centroid}, Extent: {props.extent}")
+
+    for i in range(0, len(properties)):
+        if ((properties[i].area < area_size and properties[i].extent >= extent)
+            or properties[i].area < small_region_size):
+            temp = ~(labels == properties[i].label)
+            temp = temp.astype(np.uint8)
+            image = image * temp
+
+    return image
 
 
 if __name__ == '__main__':
     ##### ---------- Define Filepaths ---------- #####
-    DATADIR = ''  # Filepath of the HDF5 dataset. It must be an HDF5 file with at least 2 levels of downsampling (levels: 0, 1, 2)
-    SAVEPATH = ''  # Filepath where the segmented masks will be saved
+    DATADIR = ''  # Specify the path to the HDF5 dataset.
+    SAVEPATH = ''  # Specify the path where segmented masks will be saved.
     #################################################
 
 
     ##### ---------- Define Parameters ---------- #####
     # Region of interest
     D_START = 0  # Start depth (0 if processing the entire dataset)
-    D_END =  # End depth (use the maximum depth if processing the entire dataset)
+    D_END =   # End depth (use the maximum depth if processing the entire dataset)
     H_START = 0  # Start height (0 if processing the entire dataset)
-    H_END =  # End height (use the maximum height if processing the entire dataset)
+    H_END =   # End height (use the maximum height if processing the entire dataset)
     W_START = 0  # Start width (0 if processing the entire dataset)
-    W_END =  # End width (use the maximum width if processing the entire dataset)
+    W_END =   # End width (use the maximum width if processing the entire dataset)
 
     # Define chunks
-    CHUNK_SIZE = 100  # Size of the convolving box. A small chunk size increases noise and computational time, while a large chunk size reduces the detection of microvessels.
-    STEP_SIZE = 50
-    CH = 't00000/s00/0/cells'
+    BACKGROUND_NOISE_THRSH = 250  # Signal intensity of the no-data region
+    CHUNK_SIZE = 100  # Size of the convolving box
+    STEP_SIZE = 70  # Overlapping region equals CHUNK_SIZE - STEP_SIZE
+    CH = 't00000/s00/0/cells'  # Path to the channel within the HDF5 file
 
     # Define hysteresis thresholding parameters
-    HYST_LOW = 2  # Lower threshold for hysteresis thresholding (recommended value: 1)
-    HYST_HIGH = 3  # Higher threshold for hysteresis thresholding (recommended value: 3)
+    HYST_LOW = 2  # Lower threshold for hysteresis thresholding
+    HYST_HIGH = 3  # Higher threshold for hysteresis thresholding
     ###################################################
 
 
-    ##### ---------- Preprocess ---------- #####
+    ##### ---------- Preprocessing ---------- #####
     with h5.File(DATADIR, 'r') as f:
-        d_raw,h_raw,w_raw = f[CH].shape
+        d_raw, h_raw, w_raw = f[CH].shape
         print(f[CH].shape)
-        # d = 
-        # h = 
-        # w = 
-        d = d_raw
-        h = h_raw
-        w = w_raw
+        d = 500
+        h = 350
+        w = 300
 
+        # Uncomment below for obtaining raw tiff
         # chunk = f[CH][D_START:D_END, H_START:H_END, W_START:W_END]
-        # chunk = intensity_normalization(chunk, [0.5,3])
-        # chunk = edge_preserving_smoothing_3d(chunk)
-        # imsave(SAVEPATH + 'original_data.tif', chunk)  
-        # print('Done!')
+        # imsave(os.path.join(SAVEPATH, 'original_data.tif'), chunk)
+        # print('Raw Data Obtained!')
 
         print('Dataset located!')
         print('Region of interest shape:', d, h, w)
@@ -261,18 +324,18 @@ if __name__ == '__main__':
     if not os.path.exists(SAVEPATH):
         os.makedirs(SAVEPATH)
 
-    num_pos_h = ceil(h/STEP_SIZE) 
-    num_pos_w = ceil(w/STEP_SIZE)
-    num_pos_d = ceil(d/STEP_SIZE)
+    num_pos_h = ceil(h / STEP_SIZE)
+    num_pos_w = ceil(w / STEP_SIZE)
+    num_pos_d = ceil(d / STEP_SIZE)
     print('Num of steps in 3 dims:', num_pos_h, num_pos_w, num_pos_d)
     ############################################
 
 
     ##### ---------- Multi-otsu Thresholding ---------- #####
     current_step = 1
-    total_step = (num_pos_h) * (num_pos_w) * (num_pos_d)
-    otsu_3d = np.zeros((d,h,w), dtype = np.uint8)
-    count_3d = np.zeros((d,h,w), dtype = np.uint8)
+    total_step = num_pos_h * num_pos_w * num_pos_d
+    otsu_3d = np.zeros((d, h, w), dtype=np.uint8)
+    count_3d = np.zeros((d, h, w), dtype=np.uint8)
     input_queue = mp.Queue()
     output_queue = mp.Queue()
     data_list = []
@@ -283,33 +346,35 @@ if __name__ == '__main__':
     print('Preparing for multiprocessing!')
     slide_start = time.time()
     current_append = 1
-    for pos_h in range(H_START, H_START+num_pos_h*STEP_SIZE, STEP_SIZE):
-        for pos_w in range(W_START, W_START+num_pos_w*STEP_SIZE, STEP_SIZE):
-            for pos_d in range(D_START, D_START+num_pos_d*STEP_SIZE, STEP_SIZE):
+    for pos_h in range(H_START, H_START + num_pos_h * STEP_SIZE, STEP_SIZE):
+        for pos_w in range(W_START, W_START + num_pos_w * STEP_SIZE, STEP_SIZE):
+            for pos_d in range(D_START, D_START + num_pos_d * STEP_SIZE, STEP_SIZE):
                 print('Append: ' + str(current_append) + '/' + str(total_step))
                 with h5.File(DATADIR, 'r') as f:
-                    chunk = f[CH][pos_d:min(D_END, pos_d+CHUNK_SIZE), pos_h:min(H_END, pos_h+CHUNK_SIZE), pos_w:min(W_END, pos_w+CHUNK_SIZE)]
-                data_list.append((chunk, (pos_d-D_START, pos_h-H_START, pos_w-W_START)))
+                    chunk = f[CH][pos_d:min(D_END, pos_d + CHUNK_SIZE), pos_h:min(H_END, pos_h + CHUNK_SIZE),
+                                pos_w:min(W_END, pos_w + CHUNK_SIZE)]
+                data_list.append((chunk, (pos_d - D_START, pos_h - H_START, pos_w - W_START),
+                                  BACKGROUND_NOISE_THRSH))
                 current_append += 1
-    future_to_position = {executor.submit(multi_otsu, data): data for data in data_list}
+
+    future_to_position = {executor.submit(multi_otsu_processing, data): data for data in data_list}
 
     print('Start multiprocessing!')
     current = 1
     for future in concurrent.futures.as_completed(future_to_position):
         result, position = future.result()
         i, j, k = position
-        print(position)
-        print(result.shape)
-        otsu_3d[i:min(d, i+CHUNK_SIZE), j:min(h, j+CHUNK_SIZE), k:min(w, k+CHUNK_SIZE)] += result
-        count_3d[i:min(d, i+CHUNK_SIZE), j:min(h, j+CHUNK_SIZE), k:min(w, k+CHUNK_SIZE)] += np.ones(result.shape, dtype = np.uint8)
+        otsu_3d[i:min(d, i + CHUNK_SIZE), j:min(h, j + CHUNK_SIZE), k:min(w, k + CHUNK_SIZE)] += result
+        count_3d[i:min(d, i + CHUNK_SIZE), j:min(h, j + CHUNK_SIZE), k:min(w, k + CHUNK_SIZE)] += np.ones(
+            result.shape, dtype=np.uint8)
         print('Joined: ' + str(current) + '/' + str(total_step))
         current += 1
-    
+
     slide_end = time.time()
     duration = slide_end - slide_start
     print('Overall duration of sliding: ' + str(duration) + ' s')
-    imsave(SAVEPATH + 'otsu_3d.tif', otsu_3d)
-    imsave(SAVEPATH + 'count_3d.tif', count_3d)
+    imsave(os.path.join(SAVEPATH, 'otsu_3d.tif'), otsu_3d)
+    imsave(os.path.join(SAVEPATH, 'count_3d.tif'), count_3d)
     #########################################################
 
 
