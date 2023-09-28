@@ -8,8 +8,9 @@ import time
 import tifffile
 import numpy as np
 
-
-save_path = '' # Filepath where the otsu_3d.tif and count_3d.tif are saved and hyst.tif will be saved
+##### ---------- Define Parameters ---------- #####
+save_path = '' # Filepath where the otsu_3d.tif and count_3d.tif are saved and divide.tif will be saved
+###################################################
 
 otsu_3d = tifffile.imread(save_path + 'otsu_3d.tif')
 count_3d = tifffile.imread(save_path + 'count_3d.tif')

@@ -11,8 +11,10 @@ from tqdm import tqdm
 from tifffile import imsave
 from scipy import ndimage as ndi
 
-
+##### ---------- Define Parameters ---------- #####
 save_path = '' # Filepath where the hyst.tif is saved and hole_filling.tif will be saved
+###################################################
+
 hyst = tifffile.imread(save_path + 'hyst_overlap.tif')
 fill_start = time.time()
 hole_filling = np.zeros(hyst.shape, dtype = np.uint8)

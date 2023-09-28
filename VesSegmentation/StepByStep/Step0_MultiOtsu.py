@@ -7,26 +7,31 @@ The user needs to define filepaths and parameters at the beginning of the main s
 # # All the packages needed to set up the environment, copy them into the terminal
 # conda create -y -n vessel_seg -c conda-forge python=3.9
 # conda activate vessel_seg
-# pip install tifffile
-# pip install h5py
-# pip install scikit-image
-# pip install matplotlib
 # pip install tqdm
+# pip install zarr
+# pip install h5py
 # pip install psutil
+# pip install tifffile
+# pip install matplotlib
+# pip install scikit-image
 
 
 import os
 import itk
+import zarr
 import time
 import psutil
 import h5py as h5
 import numpy as np
+from tqdm import tqdm
 from math import ceil
 import concurrent.futures
-from tifffile import imsave
+from tifffile import imsave, imread
 from scipy.stats import norm
 import multiprocessing as mp
+from scipy import ndimage as ndi
 from skimage import filters, measure
+from scipy.ndimage import median_filter
 from concurrent.futures import ProcessPoolExecutor
 
 
@@ -229,113 +234,68 @@ def multi_otsu_processing(data: tuple) -> tuple:
     return (result, position)
 
 
-def remove_small_region(image, area_size=100, extent=0.4, small_region_size=40) -> np.ndarray:
-    """Remove Small Regions and Non-Vascular Regions from a 3D Image
-
-    This function takes a 3D image containing segmented regions and removes small
-    and non-vascular regions based on their area and extent. The result is an image with the targeted regions removed.
-
-    Parameters:
-    ----------
-    image: ndarray
-        A 3D numpy array containing segmented regions.
-    area_size: int, optional
-        Threshold for small region size. Default is 100.
-    extent: float, optional
-        Threshold for region extent to determine non-vascular regions. Default is 0.4.
-    small_region_size: int, optional
-        Threshold for very small region size. Default is 40.
-
-    Returns:
-    ----------
-    ndarray
-        A 3D numpy array with small and non-vascular regions removed.
-
-    Notes:
-    ----------
-        - 'extent' here refers to the ratio of isolated region size to the external bounding box size.
-        - The function uses skimage's regionprops to analyze and filter regions.
-    
-    Reference:
-    ----------
-    - HP-VSP Library (source of the code):
-    https://github.com/visionlyx/HP-VSP/blob/main/vascular%20segmentation%20pipeline/mpi_block_fusion.py
-    """
-    labels = measure.label(image)
-    properties = measure.regionprops(labels)
-    
-    for props in properties:
-        print(f"Label: {props.label}, Area: {props.area}, Centroid: {props.centroid}, Extent: {props.extent}")
-
-    for i in range(0, len(properties)):
-        if ((properties[i].area < area_size and properties[i].extent >= extent)
-            or properties[i].area < small_region_size):
-            temp = ~(labels == properties[i].label)
-            temp = temp.astype(np.uint8)
-            image = image * temp
-
-    return image
-
-
 if __name__ == '__main__':
     ##### ---------- Define Filepaths ---------- #####
-    DATADIR = ''  # Specify the path to the HDF5 dataset.
+    DATADIR = ''  # Specify the path to the dataset.
     SAVEPATH = ''  # Specify the path where segmented masks will be saved.
     #################################################
 
 
     ##### ---------- Define Parameters ---------- #####
-    # Region of interest
-    D_START = 0  # Start depth (0 if processing the entire dataset)
-    D_END =   # End depth (use the maximum depth if processing the entire dataset)
-    H_START = 0  # Start height (0 if processing the entire dataset)
-    H_END =   # End height (use the maximum height if processing the entire dataset)
-    W_START = 0  # Start width (0 if processing the entire dataset)
-    W_END =   # End width (use the maximum width if processing the entire dataset)
-
     # Define chunks
     BACKGROUND_NOISE_THRSH = 250  # Signal intensity of the no-data region
     CHUNK_SIZE = 100  # Size of the convolving box
     STEP_SIZE = 70  # Overlapping region equals CHUNK_SIZE - STEP_SIZE
+    file_format = 'tiff' # or "hdf5"
     CH = 't00000/s00/0/cells'  # Path to the channel within the HDF5 file
-
-    # Define hysteresis thresholding parameters
-    HYST_LOW = 2  # Lower threshold for hysteresis thresholding
-    HYST_HIGH = 3  # Higher threshold for hysteresis thresholding
     ###################################################
 
 
     ##### ---------- Preprocessing ---------- #####
-    with h5.File(DATADIR, 'r') as f:
-        d_raw, h_raw, w_raw = f[CH].shape
-        print(f[CH].shape)
-        d = 500
-        h = 350
-        w = 300
-
-        # Uncomment below for obtaining raw tiff
-        # chunk = f[CH][D_START:D_END, H_START:H_END, W_START:W_END]
-        # imsave(os.path.join(SAVEPATH, 'original_data.tif'), chunk)
-        # print('Raw Data Obtained!')
-
+    if file_format == 'tiff':
+        data = imread(DATADIR, aszarr=True)
+        data_zarr = zarr.open(data, mode='r')
+        d_raw, h_raw, w_raw = data_zarr.shape
         print('Dataset located!')
-        print('Region of interest shape:', d, h, w)
+        print('Raw dataset shape: ', data_zarr.shape)
+
+    elif file_format == 'hdf5':
+        with h5.File(DATADIR, 'r') as f:
+            d_raw, h_raw, w_raw = f[CH].shape
+            print('Dataset located!')
+            print('Raw dataset shape: ', f[CH].shape)
 
     if not os.path.exists(SAVEPATH):
         os.makedirs(SAVEPATH)
+    
+    # Region of interest
+    D_START = 0  # Start depth (0 if processing the entire dataset)
+    D_END = d_raw  # End depth (use the maximum depth if processing the entire dataset)
+    H_START = 0  # Start height (0 if processing the entire dataset)
+    H_END = h_raw # End height (use the maximum height if processing the entire dataset)
+    W_START = 0  # Start width (0 if processing the entire dataset)
+    W_END = w_raw # End width (use the maximum width if processing the entire dataset)
 
-    num_pos_h = ceil(h / STEP_SIZE)
-    num_pos_w = ceil(w / STEP_SIZE)
-    num_pos_d = ceil(d / STEP_SIZE)
-    print('Num of steps in 3 dims:', num_pos_h, num_pos_w, num_pos_d)
+    # Uncomment below for obtaining raw tiff of ROI
+    # data_ROI = data_zarr[D_START:D_END, H_START:H_END, W_START:W_END]
+    # imsave(os.path.join(SAVEPATH, 'original_data.tif'), data_ROI)
+    # print('Raw Data Obtained!')
+
+    d_size = D_END-D_START
+    h_size = H_END-H_START
+    w_size = W_END-W_START
+    num_pos_d = ceil(d_size / STEP_SIZE)
+    num_pos_h = ceil(h_size / STEP_SIZE)
+    num_pos_w = ceil(w_size / STEP_SIZE)
+    print('Num of steps in ROI:', num_pos_h, num_pos_w, num_pos_d)
     ############################################
 
 
     ##### ---------- Multi-otsu Thresholding ---------- #####
     current_step = 1
     total_step = num_pos_h * num_pos_w * num_pos_d
-    otsu_3d = np.zeros((d, h, w), dtype=np.uint8)
-    count_3d = np.zeros((d, h, w), dtype=np.uint8)
+    otsu_3d = np.zeros((d_size, h_size, w_size), dtype=np.uint8)
+    count_3d = np.zeros((d_size, h_size, w_size), dtype=np.uint8)
     input_queue = mp.Queue()
     output_queue = mp.Queue()
     data_list = []
@@ -350,11 +310,14 @@ if __name__ == '__main__':
         for pos_w in range(W_START, W_START + num_pos_w * STEP_SIZE, STEP_SIZE):
             for pos_d in range(D_START, D_START + num_pos_d * STEP_SIZE, STEP_SIZE):
                 print('Append: ' + str(current_append) + '/' + str(total_step))
-                with h5.File(DATADIR, 'r') as f:
-                    chunk = f[CH][pos_d:min(D_END, pos_d + CHUNK_SIZE), pos_h:min(H_END, pos_h + CHUNK_SIZE),
-                                pos_w:min(W_END, pos_w + CHUNK_SIZE)]
-                data_list.append((chunk, (pos_d - D_START, pos_h - H_START, pos_w - W_START),
-                                  BACKGROUND_NOISE_THRSH))
+                if file_format == 'tiff':
+                    chunk = data_zarr[pos_d:min(D_END, pos_d + CHUNK_SIZE), pos_h:min(H_END, pos_h + CHUNK_SIZE),
+                                    pos_w:min(W_END, pos_w + CHUNK_SIZE)]
+                elif file_format == 'hdf5':
+                    with h5.File(DATADIR, 'r') as f:
+                        chunk = f[CH][pos_d:min(D_END, pos_d + CHUNK_SIZE), pos_h:min(H_END, pos_h + CHUNK_SIZE),
+                                    pos_w:min(W_END, pos_w + CHUNK_SIZE)]
+                data_list.append((chunk, (pos_d - D_START, pos_h - H_START, pos_w - W_START), BACKGROUND_NOISE_THRSH))
                 current_append += 1
 
     future_to_position = {executor.submit(multi_otsu_processing, data): data for data in data_list}
@@ -364,8 +327,8 @@ if __name__ == '__main__':
     for future in concurrent.futures.as_completed(future_to_position):
         result, position = future.result()
         i, j, k = position
-        otsu_3d[i:min(d, i + CHUNK_SIZE), j:min(h, j + CHUNK_SIZE), k:min(w, k + CHUNK_SIZE)] += result
-        count_3d[i:min(d, i + CHUNK_SIZE), j:min(h, j + CHUNK_SIZE), k:min(w, k + CHUNK_SIZE)] += np.ones(
+        otsu_3d[i:min(d_size, i + CHUNK_SIZE), j:min(h_size, j + CHUNK_SIZE), k:min(w_size, k + CHUNK_SIZE)] += result
+        count_3d[i:min(d_size, i + CHUNK_SIZE), j:min(h_size, j + CHUNK_SIZE), k:min(w_size, k + CHUNK_SIZE)] += np.ones(
             result.shape, dtype=np.uint8)
         print('Joined: ' + str(current) + '/' + str(total_step))
         current += 1

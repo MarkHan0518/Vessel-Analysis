@@ -8,10 +8,11 @@ from tifffile import imsave, imread
 import time
 from scipy.ndimage import median_filter
 
-
+##### ---------- Define Parameters ---------- #####
 save_path = '' # Filepath where the remove_region.tif is saved and smoothing.tif will be saved
-remove_region = imread(save_path + 'remove_region.tif')
+###################################################
 
+remove_region = imread(save_path + 'remove_region.tif')
 smooth_start = time.time()
 
 size = 3
